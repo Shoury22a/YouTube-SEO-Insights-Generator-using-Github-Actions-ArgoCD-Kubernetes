@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        DOCKER_IMAGE    = "shoury22a/youtube-seo-app"
+        DOCKER_IMAGE    = "shour22ya/youtube-seo-app"
         DOCKER_TAG      = "${env.BUILD_ID}"
     }
 

@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
       - name: youtube-seo
-        image: shoury22a/youtube-seo-app:latest
+        image: shour22ya/youtube-seo-app:latest
         imagePullPolicy: Always
         ports:
         - containerPort: 8501
