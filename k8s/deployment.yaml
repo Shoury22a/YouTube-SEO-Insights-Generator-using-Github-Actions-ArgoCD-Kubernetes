@@ -16,8 +16,8 @@ spec:
     spec:
       containers:
       - name: youtube-seo
-        image: youtube-seo-app:latest
-        imagePullPolicy: IfNotPresent
+        image: shoury22a/youtube-seo-app:latest
+        imagePullPolicy: Always
         ports:
         - containerPort: 8501
         env:
