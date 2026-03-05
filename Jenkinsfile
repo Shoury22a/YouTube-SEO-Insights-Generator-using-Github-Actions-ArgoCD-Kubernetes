@@ -17,8 +17,10 @@ pipeline {
 
         stage('Linting') {
             steps {
-                sh 'pip install ruff'
-                sh 'ruff check .'
+                script {
+                    // Running linting inside a specialized container so we don't need Python on the Jenkins host
+                    sh "docker run --rm -v ${env.WORKSPACE}:/app -w /app python:3.11-slim bash -c 'pip install ruff && ruff check .'"
+                }
             }
         }
 
