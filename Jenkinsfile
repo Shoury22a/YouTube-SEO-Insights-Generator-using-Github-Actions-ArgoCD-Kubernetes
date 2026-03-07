@@ -16,7 +16,7 @@ pipeline {
         stage('Lint') {
             steps {
                 // Runs ruff linter in a temporary Python container. Uses the host Docker socket.
-                sh 'docker run --rm -v $(pwd):/app -w /app python:3.11-slim sh -c "pip install --quiet ruff && ruff check . || true"'
+                sh 'docker run --rm -v "$(pwd)":/app -w /app python:3.11-slim sh -c "pip install --quiet ruff && ruff check . || true"'
             }
         }
 
@@ -49,7 +49,11 @@ pipeline {
                 sh 'git config user.name "Jenkins CI"'
                 sh 'git add k8s/deployment.yaml'
                 sh "git commit -m 'ci: Deploy image version ${DOCKER_TAG}' || echo 'No changes to commit'"
-                sh 'git push origin main || echo "Push skipped (no changes)"'
+                
+                withCredentials([usernamePassword(credentialsId: 'github-creds', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_TOKEN')]) {
+                    // Injecting the token into the remote URL for the push
+                    sh "git push https://${GIT_USER}:${GIT_TOKEN}@github.com/Shoury22a/YouTube-SEO-Insights-Generator-using-Jenkins-ArgoCD-Kubernetes.git main"
+                }
             }
         }
     }
