@@ -3,12 +3,9 @@ Tests for LangChain integration in src/ai_model.py
 Verifies structure, parsing, and chain wiring WITHOUT hitting the real API.
 """
 
-import json
-import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
-from pydantic import ValidationError
 
 from src.ai_model import (
     SEOOutput,
