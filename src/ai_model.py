@@ -1,6 +1,12 @@
 """
 AI Model Module — YouTube SEO Insights Generator.
-Backend: Google Gemini 2.0 Flash (FREE — 1M tokens/day)
+Backend: Google Gemini via LangChain (langchain-google-genai)
+
+LangChain integration provides:
+  - ChatGoogleGenerativeAI: unified LLM client with automatic fallbacks
+  - PydanticOutputParser (langchain-core): guaranteed structured JSON output every time
+  - RecursiveCharacterTextSplitter + manual map-reduce: long-transcript handling
+  - ChatPromptTemplate: clean, maintainable prompt management
 
 Generates structured SEO metadata:
   - 3-5 Clickable A/B Titles
@@ -9,24 +15,21 @@ Generates structured SEO metadata:
   - 15-20 SEO Tags (capped at 500 chars)
   - Social Media Posts (Twitter/X, LinkedIn, Instagram)
   - Thumbnail Concept Ideas
-
-Edge-case handling:
-  - Massive transcripts → Summarization pipeline (Flash 8B first)
-  - Timestamp hallucination → Chronological validation
-  - Tag limit → Auto-truncation to 500 chars
-  - Shorts → Separate prompt (no timestamps, ≤45 char titles)
-  - Multi-language → Output language injected into system prompt
-  - Bad LLM JSON → Wrapped parsing with ValidationException
+  - Niche Analysis & Contrarian Titles
 """
 
-import json
 import os
 import sys
 import time
 from typing import Optional
 
-import google.generativeai as genai
 from dotenv import load_dotenv
+from pydantic import BaseModel, Field
+
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
+from langchain_core.output_parsers import PydanticOutputParser
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from src.logger import get_logger
 from src.exception import APIException, ValidationException
@@ -43,43 +46,50 @@ MAX_TRANSCRIPT_CHARS = 25_000
 MAX_TAG_CHARS        = 500
 SHORT_TITLE_MAX      = 45
 
-PRIMARY_MODEL = "gemini-flash-latest"   # Pointed to working model
-FALLBACK_MODEL = "gemini-pro-latest"      # Fallback to pro if flash hits limits
-SUMMARY_MODEL = "gemini-flash-lite-latest" # Faster model for summarisation
+PRIMARY_MODEL  = "gemini-2.0-flash"
+FALLBACK_MODEL = "gemini-1.5-pro-latest"
+SUMMARY_MODEL  = "gemini-2.0-flash-lite"
 
-_JSON_SCHEMA = """
-Respond ONLY with a valid JSON object matching this schema exactly:
-{
-  "titles": ["<title_1>", "<title_2>", "<title_3>", "<title_4>", "<title_5>"],
-  "description": "<optimised description as a single string, use \\n for line breaks>",
-  "timestamps": [{"time": "0:00", "label": "<chapter label>"}],
-  "tags": ["<tag_1>", ..., "<tag_20>"],
-  "social_posts": {
-    "twitter": "<tweet ≤280 chars>",
-    "linkedin": "<LinkedIn post>",
-    "instagram": "<Instagram caption with hashtags>"
-  },
-  "thumbnail_ideas": ["<idea_1>", "<idea_2>", "<idea_3>"],
-  "niche_analysis": {
-    "saturation_score": 7,
-    "competition_level": "High",
-    "recommendation": "<1-2 sentence actionable advice, e.g. suggest a sub-niche angle>"
-  },
-  "contrarian_titles": []
-}
-Rules:
-- niche_analysis.saturation_score: integer 1-10 (10=most crowded).
-- niche_analysis.competition_level: exactly one of 'Low', 'Medium', 'High'.
-- contrarian_titles: array of 2 strings that challenge the dominant angle in the competitor context. If no competitor context provided, return an empty array [].
-Output ONLY the raw JSON. No markdown fences, no explanation outside the JSON.
-"""
 
 # ---------------------------------------------------------------------------
-# Client setup
+# Pydantic Output Schema — guarantees structured JSON every time
 # ---------------------------------------------------------------------------
 
-def _configure_genai() -> None:
-    """Configures the google-generativeai SDK with the API key from env."""
+class NicheAnalysis(BaseModel):
+    saturation_score: int = Field(description="Integer 1-10, 10 = most crowded")
+    competition_level: str = Field(description="One of: 'Low', 'Medium', 'High'")
+    recommendation: str = Field(description="1-2 sentence actionable advice")
+
+
+class TimestampEntry(BaseModel):
+    time: str = Field(description="Timestamp in MM:SS or H:MM:SS format")
+    label: str = Field(description="Chapter label")
+
+
+class SocialPosts(BaseModel):
+    twitter: str = Field(description="Tweet ≤280 characters")
+    linkedin: str = Field(description="Professional LinkedIn post")
+    instagram: str = Field(description="Instagram caption with hashtags")
+
+
+class SEOOutput(BaseModel):
+    titles: list[str] = Field(description="3-5 A/B title options")
+    description: str = Field(description="200-350 word optimised description")
+    timestamps: list[TimestampEntry] = Field(description="Chapter timestamps, empty [] if no chapter notes")
+    tags: list[str] = Field(description="15-20 SEO tags, total ≤500 chars when joined")
+    social_posts: SocialPosts
+    thumbnail_ideas: list[str] = Field(description="3 vivid thumbnail concepts")
+    niche_analysis: NicheAnalysis
+    contrarian_titles: list[str] = Field(
+        description="2 contrarian titles if competitor context provided, else []"
+    )
+
+
+# ---------------------------------------------------------------------------
+# LLM Client factory — with automatic fallback via LangChain
+# ---------------------------------------------------------------------------
+
+def _get_api_key() -> str:
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
         raise APIException(
@@ -88,7 +98,40 @@ def _configure_genai() -> None:
             "and add it to the .env file.",
             sys,
         )
-    genai.configure(api_key=api_key)
+    return api_key
+
+
+def _build_llm_with_fallback() -> ChatGoogleGenerativeAI:
+    """
+    Returns the primary LangChain LLM (Gemini Flash) with the Pro model
+    as an automatic fallback. If primary hits a quota/rate-limit error,
+    LangChain transparently retries with the fallback model.
+    """
+    api_key = _get_api_key()
+
+    primary = ChatGoogleGenerativeAI(
+        model=PRIMARY_MODEL,
+        google_api_key=api_key,
+        temperature=0.7,
+        max_output_tokens=4096,
+    )
+    fallback = ChatGoogleGenerativeAI(
+        model=FALLBACK_MODEL,
+        google_api_key=api_key,
+        temperature=0.7,
+        max_output_tokens=4096,
+    )
+    return primary.with_fallbacks([fallback])
+
+
+def _build_summary_llm() -> ChatGoogleGenerativeAI:
+    """Lightweight model dedicated to transcript summarization."""
+    return ChatGoogleGenerativeAI(
+        model=SUMMARY_MODEL,
+        google_api_key=_get_api_key(),
+        temperature=0.3,
+        max_output_tokens=700,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -100,113 +143,109 @@ def _count_words(text: str) -> int:
 
 
 def _summarise_transcript(transcript: str) -> str:
-    """Uses Gemini Flash Lite to compress a long transcript into key themes."""
+    """
+    Map-reduce summarization using LangChain's RecursiveCharacterTextSplitter.
+
+    Flow:
+      1. Split the long transcript into overlapping chunks.
+      2. MAP: summarize each chunk individually with the summary LLM.
+      3. REDUCE: combine all chunk summaries into one concise bullet-point summary.
+
+    Falls back to simple truncation on any error.
+    """
     logger.info(
         f"Transcript too long ({_count_words(transcript)} words). "
-        "Running summarisation pipeline with gemini-2.0-flash-lite."
+        "Running LangChain map-reduce summarisation pipeline."
     )
     try:
-        model = genai.GenerativeModel(SUMMARY_MODEL)
-        response = model.generate_content(
-            "You are a concise summariser. Extract the key themes, main points, "
-            "and important facts from the video transcript below. "
-            "Output a structured bullet-point summary of 500 words or less.\n\n"
-            + transcript[:MAX_TRANSCRIPT_CHARS],
-            generation_config=genai.GenerationConfig(
-                temperature=0.3,
-                max_output_tokens=700,
-            ),
+        llm = _build_summary_llm()
+
+        # Split transcript into manageable chunks
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=4000,
+            chunk_overlap=200,
         )
-        summary = response.text.strip()
-        logger.info("Transcript summarisation complete.")
-        return summary
+        chunks = splitter.split_text(transcript[:MAX_TRANSCRIPT_CHARS])
+
+        # MAP: summarize each chunk
+        chunk_summaries = []
+        for i, chunk in enumerate(chunks):
+            logger.info(f"Summarising chunk {i + 1}/{len(chunks)}...")
+            map_prompt = (
+                "Extract the key points, main themes, and important facts from the text below. "
+                "Be concise. Output bullet points only.\n\n"
+                f"TEXT:\n{chunk}"
+            )
+            response = llm.invoke(map_prompt)
+            chunk_summaries.append(response.content)
+
+        # REDUCE: combine all chunk summaries
+        combined = "\n\n".join(chunk_summaries)
+        reduce_prompt = (
+            "You have the following bullet-point summaries from sections of a long video transcript. "
+            "Combine them into a single, coherent 400-word summary that captures the key themes, "
+            "main points, and important facts from the entire video.\n\n"
+            f"SUMMARIES:\n{combined}"
+        )
+        final_response = llm.invoke(reduce_prompt)
+        result = final_response.content.strip()
+        logger.info("Transcript map-reduce summarisation complete.")
+        return result
+
     except Exception as e:
         logger.warning(f"Summarisation failed: {e}. Falling back to truncated transcript.")
         return " ".join(transcript.split()[:3000])
 
 
 def _build_system_prompt(content_type: str, output_language: str) -> str:
+    """Returns the system prompt string based on content type and language."""
     if output_language.lower() == "hinglish":
-        lang_instruction = "You MUST write ALL output in Hinglish (a mix of Hindi and English using the Roman/English script). Use conversational, trendy Hinglish common on Indian YouTube."
+        lang_instruction = (
+            "You MUST write ALL output in Hinglish (a mix of Hindi and English using "
+            "the Roman/English script). Use conversational, trendy Hinglish common on Indian YouTube."
+        )
     elif output_language.lower() != "english":
         lang_instruction = f"You MUST write ALL output in {output_language}, regardless of input language."
     else:
         lang_instruction = ""
 
     if content_type == "YouTube Short":
-        return f"""You are an elite YouTube Shorts copywriter and SEO specialist.
-Generate viral, clickable metadata for a YouTube Short.
+        return (
+            "You are an elite YouTube Shorts copywriter and SEO specialist.\n"
+            "Generate viral, clickable metadata for a YouTube Short.\n\n"
+            "SHORTS CONSTRAINTS:\n"
+            "- Titles MUST be 45 characters or fewer.\n"
+            "- 'timestamps' array MUST be empty [].\n"
+            "- Description under 100 words.\n"
+            "- Tags highly trend-focused and specific.\n"
+            "- Social posts: energetic, short-form hooks.\n"
+            "- No keyword stuffing. Natural prose only.\n"
+            "- Always populate niche_analysis.\n"
+            "- contrarian_titles: 2 if competitor context provided, else [].\n\n"
+            + lang_instruction
+        )
 
-SHORTS CONSTRAINTS:
-- Titles MUST be 45 characters or fewer.
-- "timestamps" array MUST be empty [].
-- Description under 100 words.
-- Tags highly trend-focused and specific.
-- Social posts: energetic, short-form hooks.
-- No keyword stuffing. Natural prose only.
-- Always populate niche_analysis with saturation_score, competition_level, and recommendation.
-- contrarian_titles: 2 contrarian titles if competitor context provided, else [].
-
-{lang_instruction}
-{_JSON_SCHEMA}"""
-
-    return f"""You are a professional YouTube SEO copywriter and content strategist with deep
-expertise in YouTube's search algorithm and creator growth.
-
-Your task: generate a complete, search-optimised SEO metadata package for a long-form YouTube video.
-
-GUIDELINES:
-- Titles: Write 3-5 distinct titles with different emotional hooks (curiosity, urgency, authority, FOMO).
-- Description: 200-350 words. Weave keywords naturally into flowing prose. First 2 lines must hook the viewer.
-- Timestamps: Generate ONLY if chapter notes are provided, else return [].
-  Times MUST be in ascending order (0:00, 1:30, 3:45…). NEVER invent timecodes.
-- Tags: Generate 15-20 diverse tags mixing broad, niche, and long-tail keywords.
-  The total joined character count of all tags MUST stay under 500 characters.
-- Social posts: Twitter = conversational ≤280 chars. LinkedIn = professional insight.
-  Instagram = visual, energetic, rich in hashtags.
-- Thumbnail ideas: vivid, specific visual concepts — describe text overlay, colours, expressions.
-- Niche Analysis: Based on your knowledge of the YouTube content landscape, assess how crowded this
-  topic is. Give a saturation_score (1-10), a competition_level, and a concrete recommendation
-  (e.g. 'Niche down to iPhone 15 battery life comparisons' or 'Low competition — publish broadly').
-- Contrarian Titles: If competitor context is provided, generate exactly 2 titles that take the
-  OPPOSITE or most provocative angle to the competitor's title/approach. These should be bold,
-  disruptive, and designed to stand out. If no competitor context provided, return [].
-
-Strictly no keyword stuffing. All keywords must appear naturally within sentences.
-{lang_instruction}
-{_JSON_SCHEMA}"""
-
-
-def _build_user_prompt(
-    topic: str,
-    audience: str,
-    transcript_or_summary: str,
-    visual_description: str,
-    chapter_notes: str,
-    competitor_context: str,
-) -> str:
-    parts = [f"**Core Topic:** {topic}", f"**Target Audience:** {audience}"]
-    if transcript_or_summary:
-        parts.append(f"**Transcript / Script Summary:**\n{transcript_or_summary}")
-    elif visual_description:
-        parts.append(f"**Visual Description (no-speech content):**\n{visual_description}")
-    if chapter_notes:
-        parts.append(f"**Chapter Notes (for timestamps):**\n{chapter_notes}")
-    if competitor_context:
-        parts.append(f"**Competitor Reference (for context only):**\n{competitor_context}")
-    parts.append("Generate the complete SEO metadata package now. Return ONLY valid JSON.")
-    return "\n\n".join(parts)
-
-
-def _extract_json(raw: str) -> str:
-    """Strip markdown fences and conversational filler."""
-    raw = raw.strip()
-    # Find the first '{' and last '}'
-    start = raw.find('{')
-    end = raw.rfind('}')
-    if start != -1 and end != -1 and end > start:
-        return raw[start:end+1]
-    return raw
+    return (
+        "You are a professional YouTube SEO copywriter and content strategist with deep "
+        "expertise in YouTube's search algorithm and creator growth.\n\n"
+        "Your task: generate a complete, search-optimised SEO metadata package for a long-form YouTube video.\n\n"
+        "GUIDELINES:\n"
+        "- Titles: Write 3-5 distinct titles with different emotional hooks (curiosity, urgency, authority, FOMO).\n"
+        "- Description: 200-350 words. Weave keywords naturally into flowing prose. First 2 lines must hook the viewer.\n"
+        "- Timestamps: Generate ONLY if chapter notes are provided, else return [].\n"
+        "  Times MUST be in ascending order (0:00, 1:30, 3:45…). NEVER invent timecodes.\n"
+        "- Tags: Generate 15-20 diverse tags mixing broad, niche, and long-tail keywords.\n"
+        "  The total joined character count of all tags MUST stay under 500 characters.\n"
+        "- Social posts: Twitter = conversational ≤280 chars. LinkedIn = professional insight.\n"
+        "  Instagram = visual, energetic, rich in hashtags.\n"
+        "- Thumbnail ideas: vivid, specific visual concepts — describe text overlay, colours, expressions.\n"
+        "- Niche Analysis: Assess how crowded this topic is. Give saturation_score (1-10), "
+        "competition_level, and a concrete recommendation.\n"
+        "- Contrarian Titles: If competitor context is provided, generate exactly 2 titles that take "
+        "the OPPOSITE or most provocative angle. If no competitor context, return [].\n\n"
+        "Strictly no keyword stuffing. All keywords must appear naturally within sentences.\n"
+        + lang_instruction
+    )
 
 
 def _validate_timestamps(timestamps: list) -> list:
@@ -222,12 +261,15 @@ def _validate_timestamps(timestamps: list) -> list:
 
     valid, last = [], -1
     for ts in timestamps:
-        s = _to_secs(ts.get("time", ""))
+        # ts may be a TimestampEntry Pydantic object or a plain dict
+        t_time  = ts.time  if hasattr(ts, "time")  else ts.get("time", "")
+        t_label = ts.label if hasattr(ts, "label") else ts.get("label", "")
+        s = _to_secs(t_time)
         if s > last:
-            valid.append(ts)
+            valid.append({"time": t_time, "label": t_label})
             last = s
         else:
-            logger.warning(f"Dropping out-of-order timestamp: {ts}")
+            logger.warning(f"Dropping out-of-order timestamp: {t_time} {t_label}")
     return valid
 
 
@@ -255,67 +297,6 @@ def _enforce_short_titles(titles: list) -> list:
     return result
 
 
-def _call_gemini_with_retry(
-    prompt_parts: list,
-    max_retries: int = 3,
-) -> str:
-    """Calls Gemini with exponential backoff on quota/rate errors."""
-    for model_name in [PRIMARY_MODEL, FALLBACK_MODEL]:
-        model = genai.GenerativeModel(model_name)
-        for attempt in range(1, max_retries + 1):
-            try:
-                logger.info(f"Calling {model_name} (attempt {attempt}/{max_retries})...")
-                t0 = time.time()
-                response = model.generate_content(
-                    prompt_parts,
-                    generation_config={
-                        "temperature": 0.7,
-                        "max_output_tokens": 4096,
-                        "response_mime_type": "application/json",
-                    },
-                )
-                logger.info(f"{model_name} responded in {time.time() - t0:.2f}s.")
-                return response.text.strip()
-
-            except Exception as e:
-                real_error = str(e)
-                err_lower = real_error.lower()
-                logger.error(f"Gemini error on attempt {attempt} with {model_name}: {real_error}")
-
-                # True rate limit — retry with backoff
-                if "429" in real_error or ("quota" in err_lower and "resource_exhausted" in err_lower):
-                    wait = 2 ** attempt
-                    logger.warning(f"Rate limit. Retrying in {wait}s...")
-                    if attempt == max_retries:
-                        break  # Try fallback model
-                    time.sleep(wait)
-
-                # Invalid key or permission error — fail immediately
-                elif any(x in err_lower for x in ["api key", "api_key", "permission_denied", "403", "invalid"]):
-                    raise APIException(
-                        f"Invalid GOOGLE_API_KEY. Check your key at https://aistudio.google.com/app/apikey. "
-                        f"Details: {real_error}", sys
-                    ) from e
-
-                # Model not found — try fallback
-                elif "not found" in err_lower or "404" in real_error:
-                    logger.warning(f"Model {model_name} not found. Trying fallback.")
-                    break  # Move to fallback model
-
-                # Other errors — retry then surface real error
-                else:
-                    if attempt == max_retries:
-                        raise APIException(
-                            f"Gemini API error: {real_error}", sys
-                        ) from e
-                    time.sleep(2)
-
-    raise APIException(
-        f"Both {PRIMARY_MODEL} and {FALLBACK_MODEL} failed. "
-        "Check your API key and try again.", sys
-    )
-
-
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -331,59 +312,139 @@ def generate_seo_metadata(
     competitor_context: Optional[str] = None,
 ) -> dict:
     """
-    Generates a complete YouTube SEO metadata package using Gemini 2.0 Flash.
+    Generates a complete YouTube SEO metadata package using LangChain + Gemini.
+
+    LangChain powers:
+      - Structured output via PydanticOutputParser (SEOOutput Pydantic model)
+      - Automatic model fallback via .with_fallbacks()
+      - Long-transcript map-reduce summarization via RecursiveCharacterTextSplitter
+      - Clean prompt management via ChatPromptTemplate
 
     Returns:
-        dict with keys: titles, description, timestamps, tags, social_posts, thumbnail_ideas
+        dict with keys: titles, description, timestamps, tags,
+                        social_posts, thumbnail_ideas, niche_analysis, contrarian_titles
     """
     logger.info(f"Generating SEO metadata | type={content_type} | lang={output_language}")
-    _configure_genai()
 
-    # Summarisation pipeline for long transcripts
+    # ── 1. Transcript handling ────────────────────────────────────────────────
     transcript_text = (transcript or "").strip()
     if transcript_text and _count_words(transcript_text) > MAX_TRANSCRIPT_WORDS:
         transcript_text = _summarise_transcript(transcript_text)
     elif transcript_text:
         transcript_text = transcript_text[:MAX_TRANSCRIPT_CHARS]
 
-    system_prompt = _build_system_prompt(content_type, output_language)
-    user_prompt = _build_user_prompt(
-        topic=topic,
-        audience=audience,
-        transcript_or_summary=transcript_text,
-        visual_description=(visual_description or "").strip(),
-        chapter_notes=(chapter_notes or "").strip(),
-        competitor_context=(competitor_context or "").strip(),
-    )
+    # ── 2. Build LLM with automatic fallback ─────────────────────────────────
+    try:
+        llm = _build_llm_with_fallback()
+    except APIException:
+        raise
+    except Exception as e:
+        raise APIException(f"Failed to initialise LangChain LLM: {e}", sys) from e
 
-    # Gemini takes system and user content as a list
-    raw_json = _call_gemini_with_retry([system_prompt, user_prompt])
-    raw_json = _extract_json(raw_json)
+    # ── 3. Output parser — guarantees structured JSON via Pydantic ───────────
+    parser = PydanticOutputParser(pydantic_object=SEOOutput)
+    format_instructions = parser.get_format_instructions()
+
+    # ── 4. Prompt template ────────────────────────────────────────────────────
+    system_prompt_text = _build_system_prompt(content_type, output_language)
+
+    human_parts = [
+        f"**Core Topic:** {topic}",
+        f"**Target Audience:** {audience}",
+    ]
+    if transcript_text:
+        human_parts.append(f"**Transcript / Script Summary:**\n{transcript_text}")
+    elif (visual_description or "").strip():
+        human_parts.append(f"**Visual Description (no-speech content):**\n{visual_description.strip()}")
+    if (chapter_notes or "").strip():
+        human_parts.append(f"**Chapter Notes (for timestamps):**\n{chapter_notes.strip()}")
+    if (competitor_context or "").strip():
+        human_parts.append(f"**Competitor Reference (for context only):**\n{competitor_context.strip()}")
+    human_parts.append(
+        "Generate the complete SEO metadata package now.\n\n"
+        f"{format_instructions}"
+    )
+    human_message = "\n\n".join(human_parts)
+
+    prompt = ChatPromptTemplate.from_messages([
+        SystemMessagePromptTemplate.from_template("{system}"),
+        HumanMessagePromptTemplate.from_template("{human}"),
+    ])
+
+    # ── 5. Chain: Prompt → LLM (with fallback) → PydanticOutputParser ────────
+    chain = prompt | llm | parser
 
     try:
-        data = json.loads(raw_json)
-    except json.JSONDecodeError as e:
-        # Save the full failed output for debugging
-        debug_path = os.path.join("logs", f"failed_json_{int(time.time())}.json")
-        try:
-            os.makedirs("logs", exist_ok=True)
-            with open(debug_path, "w", encoding="utf-8") as f:
-                f.write(raw_json)
-            logger.error(f"JSON parse error: {e}. Full output saved to {debug_path}")
-        except Exception as log_err:
-            logger.error(f"Failed to log debug JSON: {log_err}")
+        logger.info("Invoking LangChain chain: Prompt → Gemini (with fallback) → PydanticOutputParser")
+        t0 = time.time()
+        seo: SEOOutput = chain.invoke({
+            "system": system_prompt_text,
+            "human": human_message,
+        })
+        logger.info(f"LangChain chain completed in {time.time() - t0:.2f}s.")
 
-        raise ValidationException(
-            f"The AI returned malformed data. This can happen with very large transcripts. "
-            f"Try again or try with a slightly shorter input. Details: {e}", sys
-        ) from e
+    except Exception as e:
+        err_str = str(e)
+        err_lower = err_str.lower()
 
-    # Post-processing
-    data["timestamps"] = _validate_timestamps(data.get("timestamps", []))
-    data["tags"]       = _enforce_tag_limit(data.get("tags", []))
+        if any(x in err_lower for x in ["api key", "api_key", "permission_denied", "403", "invalid"]):
+            raise APIException(
+                f"Invalid GOOGLE_API_KEY. Check your key at https://aistudio.google.com/app/apikey. "
+                f"Details: {err_str}", sys
+            ) from e
+
+        if "validation" in err_lower or "pydantic" in err_lower:
+            raise ValidationException(
+                f"The AI returned data that could not be validated. "
+                f"Try submitting again. Details: {err_str}", sys
+            ) from e
+
+        raise APIException(f"LangChain chain error: {err_str}", sys) from e
+
+    # ── 6. Convert SEOOutput Pydantic model → plain dict ─────────────────────
+    # Normalize timestamps
+    normalized_timestamps = []
+    for ts in (seo.timestamps or []):
+        if hasattr(ts, "time"):
+            normalized_timestamps.append({"time": ts.time, "label": ts.label})
+        elif isinstance(ts, dict):
+            normalized_timestamps.append(ts)
+
+    # Normalize social_posts
+    sp = seo.social_posts
+    if hasattr(sp, "twitter"):
+        social_dict = {"twitter": sp.twitter, "linkedin": sp.linkedin, "instagram": sp.instagram}
+    else:
+        social_dict = dict(sp)
+
+    # Normalize niche_analysis
+    na = seo.niche_analysis
+    if hasattr(na, "saturation_score"):
+        niche_dict = {
+            "saturation_score": na.saturation_score,
+            "competition_level": na.competition_level,
+            "recommendation": na.recommendation,
+        }
+    else:
+        niche_dict = dict(na)
+
+    data = {
+        "titles": list(seo.titles),
+        "description": seo.description,
+        "timestamps": normalized_timestamps,
+        "tags": list(seo.tags),
+        "social_posts": social_dict,
+        "thumbnail_ideas": list(seo.thumbnail_ideas),
+        "niche_analysis": niche_dict,
+        "contrarian_titles": list(seo.contrarian_titles),
+    }
+
+    # ── 7. Post-processing (same as before) ───────────────────────────────────
+    data["timestamps"] = _validate_timestamps(data["timestamps"])
+    data["tags"]       = _enforce_tag_limit(data["tags"])
 
     if content_type == "YouTube Short":
-        data["titles"]     = _enforce_short_titles(data.get("titles", []))
+        data["titles"]     = _enforce_short_titles(data["titles"])
         data["timestamps"] = []
 
     logger.info("SEO metadata generation complete.")
