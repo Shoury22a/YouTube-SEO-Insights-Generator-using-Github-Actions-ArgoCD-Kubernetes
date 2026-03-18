@@ -32,7 +32,7 @@ from langchain_core.output_parsers import PydanticOutputParser
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from src.logger import get_logger
-from src.exception import APIException, ValidationException
+from src.exception import APIException
 
 load_dotenv()
 logger = get_logger(__name__)
