@@ -39,6 +39,8 @@ jobs:
           else
             echo "No 'tests/' directory found. Skipping unit tests..."
           fi
+        env:
+          PYTHONPATH: .
 
   build-and-push:
     needs: [lint, test]
