@@ -23,232 +23,246 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Custom Premium CSS (Glassmorphism & Vibrant Aesthetics)
+# Theme Management
 # ─────────────────────────────────────────────────────────────────────────────
-st.markdown(
-    """
-    <style>
-        /* Modern Typography */
-        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&display=swap');
+if "theme_mode" not in st.session_state:
+    st.session_state["theme_mode"] = "Dark"
 
-        html, body, [class*="css"] { 
-            font-family: 'Outfit', sans-serif; 
-            color: #f0f0f0;
-        }
+def inject_custom_css(theme: str):
+    """Injects premium Light/Dark mode CSS based on selection."""
+    is_dark = theme == "Dark"
+    
+    # Color Variables
+    bg_main = "#0a0a12" if is_dark else "#f8f9fc"
+    text_main = "#f0f0f0" if is_dark else "#1e1e2d"
+    sidebar_bg = "rgba(15, 15, 26, 0.8)" if is_dark else "rgba(255, 255, 255, 0.98)"
+    glass_bg = "rgba(255, 255, 255, 0.03)" if is_dark else "rgba(0, 0, 0, 0.02)"
+    border_clr = "rgba(255, 255, 255, 0.07)" if is_dark else "rgba(0, 0, 0, 0.08)"
+    input_bg = "rgba(255, 255, 255, 0.05)" if is_dark else "#ffffff"
+    hero_grad = "linear-gradient(135deg, #1a0a2e 0%, #0f0f1a 100%)" if is_dark else "linear-gradient(135deg, #ffffff 0%, #f7f9fc 100%)"
+    hero_txt = "linear-gradient(135deg, #ffffff 0%, #d4d4d4 100%)" if is_dark else "linear-gradient(135deg, #1e1e2d 0%, #2c3e50 100%)"
+    shadow_clr = "rgba(255, 0, 80, 0.35)" if is_dark else "rgba(230, 0, 76, 0.2)"
+    
+    st.markdown(
+        f"""
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&display=swap');
 
-        /* Animated Dark Background */
-        .stApp {
-            background: #0a0a12;
-            background-image: 
-                radial-gradient(ellipse at 10% 20%, rgba(255, 0, 80, 0.07) 0%, transparent 50%),
-                radial-gradient(ellipse at 90% 80%, rgba(120, 0, 255, 0.07) 0%, transparent 50%);
-            background-attachment: fixed;
-        }
+            /* Adaptive Base Styles */
+            html, body, [class*="css"] {{ 
+                font-family: 'Outfit', sans-serif; 
+                color: {text_main};
+            }}
 
-        /* Glassmorphism Sidebar */
-        section[data-testid="stSidebar"] {
-            background: rgba(15, 15, 26, 0.8) !important;
-            backdrop-filter: blur(20px);
-            border-right: 1px solid rgba(255, 255, 255, 0.05);
-        }
+            .stApp {{
+                background: {bg_main};
+                { f'background-image: radial-gradient(ellipse at 10% 20%, rgba(255, 0, 80, 0.07) 0%, transparent 50%), radial-gradient(ellipse at 90% 80%, rgba(120, 0, 255, 0.07) 0%, transparent 50%);' if is_dark else '' }
+                background-attachment: fixed;
+            }}
 
-        /* Hero Banner */
-        .hero-banner {
-            position: relative;
-            background: linear-gradient(135deg, #1a0a2e 0%, #0f0f1a 100%);
-            border-radius: 24px;
-            padding: 50px 40px;
-            margin-bottom: 36px;
-            border: 1px solid rgba(255, 0, 80, 0.2);
-            overflow: hidden;
-        }
-        .hero-banner::before {
-            content: '';
-            position: absolute;
-            top: -50%;
-            right: -20%;
-            width: 500px;
-            height: 500px;
-            background: radial-gradient(circle, rgba(204, 0, 255, 0.15) 0%, transparent 70%);
-            border-radius: 50%;
-            pointer-events: none;
-        }
-        .hero-banner::after {
-            content: '';
-            position: absolute;
-            bottom: -50%;
-            left: -10%;
-            width: 400px;
-            height: 400px;
-            background: radial-gradient(circle, rgba(255, 0, 80, 0.12) 0%, transparent 70%);
-            border-radius: 50%;
-            pointer-events: none;
-        }
-        .hero-brand {
-            display: flex;
-            align-items: center;
-            gap: 20px;
-            margin-bottom: 16px;
-        }
-        .hero-brand img { 
-            width: 64px; 
-            height: 64px; 
-            border-radius: 16px;
-            box-shadow: 0 0 30px rgba(255, 0, 80, 0.4);
-        }
-        .hero-badge {
-            display: inline-block;
-            background: linear-gradient(90deg, rgba(255,0,80,0.2), rgba(204,0,255,0.2));
-            border: 1px solid rgba(255, 0, 80, 0.4);
-            border-radius: 30px;
-            padding: 4px 14px;
-            font-size: 0.75rem;
-            font-weight: 600;
-            color: #ff6b9d;
-            letter-spacing: 1px;
-            text-transform: uppercase;
-            margin-bottom: 10px;
-        }
-        .hero-banner h1 { 
-            color: #fff; 
-            font-size: 3.5rem; 
-            margin: 0; 
-            font-weight: 800; 
-            letter-spacing: -2px;
-            line-height: 1.1;
-            background: linear-gradient(135deg, #ffffff 0%, #d4d4d4 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-        .hero-banner .hero-sub { 
-            color: rgba(255,255,255,0.55); 
-            margin-top: 12px; 
-            font-size: 1.15rem; 
-            font-weight: 300;
-            max-width: 600px;
-        }
-        .hero-stats {
-            display: flex;
-            gap: 24px;
-            margin-top: 28px;
-            flex-wrap: wrap;
-        }
-        .stat-chip {
-            background: rgba(255,255,255,0.05);
-            border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 12px;
-            padding: 10px 20px;
-            font-size: 0.85rem;
-        }
-        .stat-chip span { 
-            display: block; 
-            font-size: 1.3rem; 
-            font-weight: 700;
-            background: linear-gradient(90deg, #ff0050, #cc00ff);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
+            /* Glassmorphism Sidebar */
+            section[data-testid="stSidebar"] {{
+                background: {sidebar_bg} !important;
+                backdrop-filter: blur(20px);
+                border-right: 1px solid {border_clr};
+            }}
 
-        /* Glass Cards */
-        .stExpander {
-            background: rgba(255, 255, 255, 0.03) !important;
-            border-radius: 16px !important;
-            border: 1px solid rgba(255, 255, 255, 0.07) !important;
-            margin-bottom: 12px;
-            transition: all 0.3s ease;
-        }
-        .stExpander:hover {
-            border-color: rgba(255, 0, 80, 0.3) !important;
-            box-shadow: 0 0 20px rgba(255, 0, 80, 0.08);
-        }
+            /* Adaptive Hero Banner */
+            .hero-banner {{
+                position: relative;
+                background: {hero_grad};
+                border-radius: 20px;
+                padding: 32px 40px;
+                margin-bottom: 28px;
+                border: 1px solid {"rgba(255, 0, 80, 0.2)" if is_dark else "rgba(0, 0, 0, 0.06)"};
+                overflow: hidden;
+                box-shadow: { "none" if is_dark else "0 4px 20px rgba(0,0,0,0.03)" };
+            }}
+            .hero-brand {{
+                display: flex;
+                align-items: center;
+                gap: 20px;
+                margin-bottom: 16px;
+            }}
+            .hero-brand img {{ 
+                width: 64px !important; 
+                height: 64px !important; 
+                border-radius: 16px;
+                box-shadow: 0 0 30px rgba(255, 0, 80, 0.4);
+            }}
+            .hero-badge {{
+                display: inline-block;
+                background: linear-gradient(90deg, rgba(255,0,80,0.2), rgba(204,0,255,0.2));
+                border: 1px solid rgba(255, 0, 80, 0.4);
+                border-radius: 30px;
+                padding: 4px 14px;
+                font-size: 0.75rem;
+                font-weight: 600;
+                color: {"#ff6b9d" if is_dark else "#e6004c"};
+                letter-spacing: 1px;
+                text-transform: uppercase;
+                margin-bottom: 10px;
+            }}
+            .hero-banner h1 {{ 
+                font-size: 2.6rem; 
+                margin: 0; 
+                font-weight: 800; 
+                letter-spacing: -1.5px;
+                line-height: 1.1;
+                background: {hero_txt};
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                background-clip: text;
+            }}
+            .hero-banner .hero-sub {{ 
+                color: {"rgba(255,255,255,0.6)" if is_dark else "rgba(30,30,45,0.8)"}; 
+                margin-top: 8px; 
+                font-size: 1.05rem; 
+                font-weight: 400;
+                max-width: 650px;
+            }}
 
-        /* Glowing Generate Button */
-        .stButton > button {
-            background: linear-gradient(90deg, #ff0050 0%, #cc00ff 100%) !important;
-            color: white !important;
-            border: none !important;
-            border-radius: 14px !important;
-            font-family: 'Outfit', sans-serif !important;
-            font-weight: 700 !important;
-            font-size: 1.05rem !important;
-            padding: 18px 0 !important;
-            width: 100% !important;
-            letter-spacing: 0.5px;
-            box-shadow: 0 8px 30px rgba(255, 0, 80, 0.35) !important;
-            transition: all 0.3s ease !important;
-        }
-        .stButton > button:hover {
-            box-shadow: 0 12px 40px rgba(255, 0, 80, 0.55) !important;
-            transform: translateY(-2px);
-        }
-        .stButton > button:active { transform: scale(0.98); }
+            /* Stats & Chips */
+            .hero-stats {{
+                display: flex;
+                gap: 24px;
+                margin-top: 28px;
+                flex-wrap: wrap;
+            }}
+            .stat-chip {{
+                background: {"rgba(255,255,255,0.05)" if is_dark else "rgba(0,0,0,0.03)"};
+                border: 1px solid {border_clr};
+                border-radius: 12px;
+                padding: 10px 20px;
+                font-size: 0.85rem;
+            }}
+            .stat-chip span {{ 
+                display: block; 
+                font-size: 1.15rem; 
+                font-weight: 700;
+                background: linear-gradient(90deg, #ff0050, #cc00ff);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                background-clip: text;
+            }}
+            /* Specific text for chips to ensure contrast */
+            .stat-chip {{ color: {"#99a" if is_dark else "#3a3a4a"}; font-weight: 600; }}
 
-        /* Tag Pills */
-        .tag-pill {
-            display: inline-block;
-            background: rgba(255, 0, 80, 0.08);
-            border: 1px solid rgba(255, 0, 80, 0.25);
-            color: #ff6b9d;
-            border-radius: 30px;
-            padding: 5px 16px;
-            margin: 4px;
-            font-size: 0.83rem;
-            font-weight: 600;
-            transition: all 0.2s ease;
-            cursor: default;
-        }
-        .tag-pill:hover {
-            background: #ff0050;
-            color: #fff;
-            border-color: #ff0050;
-            box-shadow: 0 0 12px rgba(255, 0, 80, 0.4);
-        }
+            /* Glass Cards / Expanders */
+            .stExpander {{
+                background: {glass_bg} !important;
+                border-radius: 16px !important;
+                border: 1px solid {border_clr} !important;
+                margin-bottom: 12px;
+                transition: all 0.3s ease;
+            }}
+            .stExpander:hover {{
+                border-color: rgba(255, 0, 80, 0.3) !important;
+                box-shadow: 0 0 20px rgba(255, 0, 80, 0.08);
+            }}
+            .stExpander summary p {{ 
+                color: {text_main} !important; 
+                font-weight: 600 !important;
+            }}
 
-        /* Section Divider */
-        hr { border-color: rgba(255,255,255,0.06) !important; }
+            /* Generate Button */
+            .stButton > button {{
+                background: linear-gradient(90deg, #ff0050 0%, #cc00ff 100%) !important;
+                color: white !important;
+                border: none !important;
+                border-radius: 14px !important;
+                font-family: 'Outfit', sans-serif !important;
+                font-weight: 700 !important;
+                font-size: 1.05rem !important;
+                padding: 18px 0 !important;
+                width: 100% !important;
+                letter-spacing: 0.5px;
+                box-shadow: 0 8px 30px {shadow_clr} !important;
+                transition: all 0.3s ease !important;
+            }}
+            .stButton > button:hover {{
+                box-shadow: 0 12px 40px rgba(255, 0, 80, 0.55) !important;
+                transform: translateY(-2px);
+            }}
 
-        /* Input Fields */
-        .stTextArea textarea, .stTextInput input {
-            background: rgba(255, 255, 255, 0.04) !important;
-            border: 1px solid rgba(255,255,255,0.08) !important;
-            border-radius: 12px !important;
-            color: #fff !important;
-        }
-        .stTextArea textarea:focus, .stTextInput input:focus {
-            border-color: rgba(255, 0, 80, 0.5) !important;
-            box-shadow: 0 0 0 3px rgba(255, 0, 80, 0.1) !important;
-        }
+            /* Input Fields */
+            .stTextArea textarea, .stTextInput input, div[data-baseweb="select"] > div {{
+                background: {input_bg} !important;
+                border: 1px solid {border_clr} !important;
+                border-radius: 12px !important;
+                color: {text_main} !important;
+                -webkit-text-fill-color: {text_main} !important;
+            }}
+            .stTextArea textarea:focus, .stTextInput input:focus {{
+                border-color: rgba(255, 0, 80, 0.5) !important;
+                box-shadow: 0 0 0 3px rgba(255, 0, 80, 0.1) !important;
+            }}
+            ::placeholder {{
+                color: {"rgba(255,255,255,0.3)" if is_dark else "rgba(0,0,0,0.45)"} !important;
+                font-style: italic;
+            }}
 
-        /* Sidebar label */
-        .sidebar-brand {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 12px 0 20px;
-            border-bottom: 1px solid rgba(255,255,255,0.07);
-            margin-bottom: 20px;
-        }
-        .sidebar-brand-name {
-            font-weight: 700;
-            font-size: 1.1rem;
-            background: linear-gradient(90deg, #ff0050, #cc00ff);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
+            /* Tag Pills */
+            .tag-pill {{
+                display: inline-block;
+                background: rgba(255, 0, 80, 0.08);
+                border: 1px solid rgba(255, 0, 80, 0.25);
+                color: {"#ff6b9d" if is_dark else "#e6004c"};
+                border-radius: 30px;
+                padding: 5px 16px;
+                margin: 4px;
+                font-size: 0.83rem;
+                font-weight: 600;
+                transition: all 0.2s ease;
+            }}
+            .tag-pill:hover {{
+                background: #ff0050;
+                color: #fff;
+                border-color: #ff0050;
+                box-shadow: 0 0 12px rgba(255, 0, 80, 0.4);
+            }}
 
-        /* Mobile Responsive */
-        @media (max-width: 768px) {
-            .hero-banner h1 { font-size: 2.4rem; }
-            .hero-stats { gap: 12px; }
-            [data-testid="column"] { width: 100% !important; flex: 1 1 100% !important; }
-        }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+            /* Theme specific tweaks */
+            hr {{ border-color: {border_clr} !important; }}
+            .stMarkdown p, .stMarkdown h1, .stMarkdown h2, .stMarkdown h3, .stMarkdown span {{ 
+                color: {text_main} !important; 
+            }}
+            
+            /* Fix invisible widget labels */
+            [data-testid="stWidgetLabel"] p, [data-testid="stRadio"] label p, .stAlert p {{
+                color: {text_main} !important;
+                font-weight: 600 !important;
+            }}
+            
+            /* Sidebar specific text */
+            section[data-testid="stSidebar"] .stMarkdown p, 
+            section[data-testid="stSidebar"] .stMarkdown h1, 
+            section[data-testid="stSidebar"] .stMarkdown h2 {{
+                color: {text_main} !important;
+            }}
+            
+            /* Sidebar items */
+            .sidebar-brand-name {{
+                font-weight: 700;
+                font-size: 1.1rem;
+                background: linear-gradient(90deg, #ff0050, #cc00ff);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                background-clip: text;
+            }}
+
+            /* Mobile Responsive */
+            @media (max-width: 768px) {{
+                .hero-banner h1 {{ font-size: 2.4rem; }}
+                .hero-stats {{ gap: 12px; }}
+                [data-testid="column"] {{ width: 100% !important; flex: 1 1 100% !important; }}
+            }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+inject_custom_css(st.session_state.theme_mode)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Hero Banner — TubeRank AI
@@ -294,6 +308,17 @@ st.markdown(
 # ─────────────────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## ⚙️ Video Settings")
+    
+    # Theme Toggle
+    theme_choice = st.selectbox(
+        "🌓 App Theme",
+        options=["Dark", "Light"],
+        index=0 if st.session_state.theme_mode == "Dark" else 1,
+        help="Switch between Dark and Light mode for the interface."
+    )
+    if theme_choice != st.session_state.theme_mode:
+        st.session_state.theme_mode = theme_choice
+        st.rerun()
 
     content_type = st.radio(
         "Content Type",
@@ -322,14 +347,7 @@ with st.sidebar:
     )
 
 
-    st.markdown("---")
-    st.markdown("## 🔍 System Status")
-    api_check = check_api_connection()
-    if api_check["status"]:
-        st.success(f"🟢 **Gemini API:** {api_check['message']}")
-    else:
-        st.error(f"🔴 **Gemini API:** {api_check['message']}")
-        st.caption(f"Details: {api_check['details']}")
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
