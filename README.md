@@ -60,21 +60,23 @@ Generate titles that deliberately challenge the dominant angle in your niche to 
 ## 📐 Architecture Diagram
 
 ```mermaid
-graph LR
-    User([User]) --> Streamlit[Streamlit UI]
-    Streamlit --> LangChain[LangChain Engine]
-    LangChain --> Gemini[Gemini 2.0 Flash]
-    Streamlit --> Scraper[yt-dlp Scraper]
+graph TD
+    User([User]) --> UI[Streamlit Frontend]
+    UI --> LC[LangChain Engine]
+    LC --> Gemini[Gemini 2.0 Flash]
+    UI --> Scraper[yt-dlp Scraper]
     
-    subgraph DevOps Pipeline
-    GHA[GitHub Actions] --> Docker[Docker Build]
-    Docker --> Registry[DockerHub]
-    Registry --> ArgoCD[ArgoCD GitOps]
-    ArgoCD --> K8s[Kubernetes Cluster]
+    subgraph "CI/CD Pipeline (Automated)"
+        Code[GitHub Repository] -- Trigger --> GHA[GitHub Actions]
+        GHA -- 1. Build & Push --> Registry[(Docker Hub)]
+        GHA -- 2. Update Manifests --> Code
     end
-    
-    GitHub((GitHub)) -- Trigger --> GHA
-    GitHub -- Sync --> ArgoCD
+
+    subgraph "GitOps Deployment"
+        Code -- 3. Watch/Sync --> ArgoCD[Argo CD]
+        ArgoCD -- 4. Deploy --> K8s[Kubernetes Cluster]
+        K8s -- 5. Pull Image --> Registry
+    end
 ```
 
 ---
